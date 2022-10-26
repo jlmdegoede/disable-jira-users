@@ -28,7 +28,8 @@
       apt: update_cache=yes
 
     - name: install google-chrome and chromedriver dependencies
-       name: ['google-chrome-stable', 'libnss3', 'libgconf-2-4']
+      apt:
+        name: ['google-chrome-stable', 'libnss3', 'libgconf-2-4']
         state: latest
         update_cache: yes
 
