@@ -1,8 +1,11 @@
-from os import environ
-import time
 import argparse
+import atexit
+import time
+from time import sleep
+
 from selenium_client import Selenium
 from selenium.common.exceptions import NoSuchElementException
+from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 
 import pandas as pd
@@ -12,27 +15,37 @@ from pathlib import Path
 
 JIRA_SERVER = "https://admin.atlassian.com/"
 
-def main():
+selenium = Selenium()
+
+
+def exit_handler():
+    selenium.driver.quit()
+
+
+def handler(event, context):
+    print("Hello from the handler()!")
     args = parse_args()
-    selenium = Selenium(headless=True)
-    get_user_management_session(selenium.driver, selenium)
-    
-    user_file = None
-    if args.users == None:
-        # No users file provided, let's download
-        user_file = download_user_file(selenium.driver, selenium)
-    else:
-        # Let's use the provided one
-        user_file = args.users
-    email_address_to_disable = get_inactive_users(user_file, args.days)
-    #print(email_address_to_disable)
-    for user in email_address_to_disable:
-        set_jira_user_inactive(selenium.driver, selenium, user)
-    
-    # Clean up the downloaded file
-    if args.users == None:
-        Path(user_file).unlink()
-    quit_driver(selenium.driver)
+    try:
+        get_user_management_session(selenium.driver, selenium)
+
+        user_file = None
+        if args.users is None:
+            # No users file provided, let's download
+            user_file = download_user_file(selenium.driver, selenium)
+        else:
+            # Let's use the provided one
+            user_file = args.users
+        email_address_to_disable = get_inactive_users(user_file, args.days)
+        # print(email_address_to_disable)
+        for user in email_address_to_disable:
+            set_jira_user_inactive(selenium.driver, selenium, user)
+
+        # Clean up the downloaded file
+        if args.users is None:
+            Path(user_file).unlink()
+    finally:
+        quit_driver(selenium.driver)
+
 
 def parse_args():
     """ Parse command line args """
@@ -47,33 +60,37 @@ def get_user_management_session(driver, selenium):
     try:
         # Load the page
         selenium.get_page(JIRA_SERVER)
-        
+
         # Enter credentials and login
         selenium.wait_for_element_id_to_click('username')
-        driver.find_element_by_id('username').send_keys(selenium.user)
+        driver.find_element(By.ID, 'username').send_keys(selenium.user)
         selenium.wait_for_element_id_to_click('login-submit')
-        selenium.move_and_click(driver.find_element_by_xpath('//*[@id="login-submit"]'))
+        selenium.move_and_click(driver.find_element(By.XPATH, '//*[@id="login-submit"]'))
         selenium.wait_for_element_id_to_click('password')
-        driver.find_element_by_id("password").send_keys(selenium.password)
-        driver.find_element_by_id("login-submit").click()
+        driver.find_element(By.ID, "password").send_keys(selenium.password)
+        driver.find_element(By.ID, "login-submit").click()
         print("[*] Logged into admin.atlassian.com")
-        
+
         # Click 'Manage users'
+        driver.implicitly_wait(10)
+        selenium.move_and_click(driver.find_element(By.XPATH, "//*[contains(text(), 'jochemxyz')]"))
         driver.implicitly_wait(5)
-        selenium.move_and_click(driver.find_element_by_xpath("//*[contains(text(), 'Manage users')]"))
+        selenium.move_and_click(driver.find_element(By.XPATH, "//*[contains(text(), 'Directory')]"))
         print("[*] Onto the user management portal")
-        #sleep(2)
-        
-    except Exception as error: # pylint: disable=broad-except
+        # sleep(2)
+
+    except Exception as error:  # pylint: disable=broad-except
         print("[!] {}".format(error))
-        selenium.save_screenshot('{}-{}'.format(user, int(time())))
+        selenium.save_screenshot('{}-{}'.format('test', datetime.now().strftime("%y-%M-%d")))
         quit_driver(driver)
 
 
 def download_user_file(driver, selenium):
     try:
         # Click "Export users"
-        selenium.wait_for_element_xpath_to_click("//*[contains(text(), 'Export users')]")
+        selenium.move_and_click(
+            driver.find_element(By.XPATH, "//button[@data-testid='org-user-list-more-details-button']"))
+        selenium.move_and_click(driver.find_element(By.XPATH, "//*[contains(text(), 'Export users')]"))
 
         '''
         Sometimes we get a "StaleElementException" if the element is reloaded between moving 
@@ -82,27 +99,27 @@ def download_user_file(driver, selenium):
         attempts = 0
         while attempts < 5:
             try:
-                selenium.move_and_click(driver.find_element_by_xpath("//*[contains(text(), 'Export users')]"))
+                selenium.move_and_click(driver.find_element(By.XPATH, "//*[contains(text(), 'Export users')]"))
                 break
             except Exception as error:
                 print("[!] {}".format(error))
-            attempts+=1
+            attempts += 1
         # Click "Download file"
         driver.implicitly_wait(15)
-        selenium.move_and_click(driver.find_element_by_xpath("//*[contains(text(), 'Download file')]"))
+        selenium.move_and_click(driver.find_element(By.XPATH, "//*[contains(text(), 'Download file')]"))
 
         # wait to download the file
-        while not is_download_finished("/tmp/"):
-            time.sleep(1)
+        while not is_download_finished("tmp/"):
+            sleep(1)
 
-        if not Path('/tmp/export-users.csv').exists():
+        if not Path('tmp/export-users.csv').exists():
             print("[!] Failed to download export-users.csv")
             quit_driver(driver)
             exit(1)
-        
-        return "/tmp/export-users.csv"
 
-    except Exception as error: # pylint: disable=broad-except
+        return "tmp/export-users.csv"
+
+    except Exception as error:  # pylint: disable=broad-except
         print("[!] {}".format(error))
         quit_driver(driver)
         exit(1)
@@ -116,6 +133,7 @@ def is_download_finished(temp_folder):
     else:
         return False
 
+
 def set_jira_user_inactive(driver, selenium, user):
     """ Disable a Jira user"""
     try:
@@ -125,10 +143,10 @@ def set_jira_user_inactive(driver, selenium, user):
         driver.find_element_by_xpath("//input[@aria-label='Search']").send_keys(Keys.CONTROL + "a")
         driver.find_element_by_xpath("//input[@aria-label='Search']").send_keys(Keys.DELETE)
         driver.find_element_by_xpath("//input[@aria-label='Search']").send_keys(user)
-        
+
         # Wait one second to fetch results before continueing
         time.sleep(3)
-        
+
         # Click on the button with three-dots
         driver.find_element_by_css_selector('.cLrmQm').click()
         time.sleep(1)
@@ -136,21 +154,22 @@ def set_jira_user_inactive(driver, selenium, user):
         selenium.move_and_click(driver.find_element_by_xpath("//*[contains(text(), 'Revoke site access')]"))
 
         time.sleep(1)
-    # Click final red 'Revoke site access' button
+        # Click final red 'Revoke site access' button
         selenium.wait_for_element_css_selector_to_click('#submit-activate-user-modal')
         driver.find_element_by_css_selector('#submit-activate-user-modal').click()
         time.sleep(2)
         print("[+] User {} succesfully disabled".format(user))
-    
+
     except NoSuchElementException as e:
         if "Revoke site access" in str(e):
-            print("[!] Cannot Revoke site access, {} might be already inactive".format(user))      
+            print("[!] Cannot Revoke site access, {} might be already inactive".format(user))
         time.sleep(1)
-    
-    except Exception as error: # pylint: disable=broad-except
+
+    except Exception as error:  # pylint: disable=broad-except
         print("[!] {}".format(error))
-        selenium.save_screenshot('{}-{}'.format(user, int(time())))
+        selenium.save_screenshot('{}-{}'.format(user, int(time)))
         driver.quit()
+
 
 def quit_driver(driver):
     driver.quit()
@@ -163,15 +182,18 @@ def get_inactive_users(filename, days):
     df = df.loc[df['Last seen in Jira Core'] != 'Never logged in']
     df['Last seen in Jira Core'] = df['Last seen in Jira Core'].apply(dateutil.parser.parse)
 
-    results = df[(df['Last seen in Jira Core'] < numberOfDaysAgo(days)) & (df['created'] < numberOfDaysAgo(days)) & (df['active'] == 'Yes')]
+    results = df[(df['Last seen in Jira Core'] < numberOfDaysAgo(days)) & (df['created'] < numberOfDaysAgo(days)) & (
+            df['active'] == 'Yes')]
     print("[+] Found " + str(len(results['email'].unique())) + " inactive users")
     print(results[['email', 'Last seen in Jira Core']])
     input("[?] Do you want to disable these Jira users? Press any key to continue. Press CTRL+C to abort")
     return set(results['email'].to_list())
 
+
 def numberOfDaysAgo(numberOfDays):
     return datetime.now() - timedelta(days=numberOfDays)
-    
+
 
 if __name__ == "__main__":
+    atexit.register(exit_handler)
     main()

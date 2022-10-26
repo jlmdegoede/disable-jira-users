@@ -1,31 +1,18 @@
-FROM python:3.8
+FROM public.ecr.aws/lambda/python:3.8 as build
+RUN yum install -y unzip && \
+    curl -Lo "/tmp/chromedriver.zip" "https://chromedriver.storage.googleapis.com/106.0.5249.61/chromedriver_linux64.zip" && \
+    curl -Lo "/tmp/chrome-linux.zip" "https://www.googleapis.com/download/storage/v1/b/chromium-browser-snapshots/o/Linux_x64%2F1036826%2Fchrome-linux.zip?alt=media" && \
+    unzip /tmp/chromedriver.zip -d /opt/ && \
+    unzip /tmp/chrome-linux.zip -d /opt/
 
-COPY . /app
-WORKDIR /app
-
-#RUN mkdir /tmp
-
-# install google chrome
-#RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add -
-RUN curl -fsSL https://dl-ssl.google.com/linux/linux_signing_key.pub | APT_KEY_DONT_WARN_ON_DANGEROUS_USAGE=DontWarn apt-key add -
-RUN sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list'
-RUN apt-get -y update
-RUN apt-get install -y google-chrome-stable
-
-# install chromedriver
-RUN apt-get install -yqq unzip
-RUN wget -O /tmp/chromedriver.zip http://chromedriver.storage.googleapis.com/`curl -sS chromedriver.storage.googleapis.com/LATEST_RELEASE`/chromedriver_linux64.zip
-RUN unzip /tmp/chromedriver.zip chromedriver -d /usr/bin/
-
-# set display port to avoid crash
-ENV DISPLAY=:99
-
-# init for creds
-ENV JIRA_USER ""
-ENV JIRA_PASS ""
-
-RUN pip install --upgrade pip
-
-RUN pip install -r requirements.txt
-
-ENTRYPOINT ["python", "./disable_jira_users.py"]
+FROM public.ecr.aws/lambda/python:3.8
+RUN yum install atk cups-libs gtk3 libXcomposite alsa-lib \
+    libXcursor libXdamage libXext libXi libXrandr libXScrnSaver \
+    libXtst pango at-spi2-atk libXt xorg-x11-server-Xvfb \
+    xorg-x11-xauth dbus-glib dbus-glib-devel -y
+RUN pip install selenium
+COPY --from=build /opt/chrome-linux /opt/chrome
+COPY --from=build /opt/chromedriver /opt/
+COPY . ./
+RUN pip install -r ./requirements.txt
+CMD [ "disable_jira_users.handler" ]
